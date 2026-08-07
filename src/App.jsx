@@ -1,4 +1,13 @@
 import { useState, useEffect, useMemo, useCallback } from "react";
+import { db } from "./firebase";
+import { 
+  collection, 
+  onSnapshot, 
+  addDoc, 
+  doc, 
+  updateDoc, 
+  deleteDoc 
+} from "firebase/firestore";
 import {
   Scissors, Calendar, Clock, User, Phone, Check, X, Settings,
   LogOut, MessageCircle, ChevronLeft, ChevronRight, Plus, Trash2,
@@ -61,10 +70,6 @@ const DAY_NAMES = ["Domingo", "Lunes", "Martes", "Miércoles", "Jueves", "Vierne
 const DAY_SHORT = ["Dom", "Lun", "Mar", "Mié", "Jue", "Vie", "Sáb"];
 const MONTHS = ["ene", "feb", "mar", "abr", "may", "jun", "jul", "ago", "sep", "oct", "nov", "dic"];
 
-function genId() {
-  return `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-}
-
 /* ------------------------------------------------------------------ */
 /*  Configuración por defecto                                         */
 /* ------------------------------------------------------------------ */
@@ -91,11 +96,8 @@ const DEFAULT_CONFIG = {
   ],
 };
 
-const CONFIG_KEY = "barberia_config_v1";
-const APPTS_KEY = "barberia_appointments_v1";
-
 /* ------------------------------------------------------------------ */
-/*  Spinner "poste de barbería" en clave neón — firma visual           */
+/*  Spinner "poste de barbería" en clave neón                         */
 /* ------------------------------------------------------------------ */
 function BarberSpinner({ size = 40 }) {
   return (
@@ -134,63 +136,70 @@ function StripeDivider() {
 }
 
 /* ------------------------------------------------------------------ */
-/*  Storage helpers (Uso de localStorage local)                        */
-/* ------------------------------------------------------------------ */
-function loadJSON(key, fallback) {
-  try {
-    const raw = localStorage.getItem(key);
-    if (raw) return JSON.parse(raw);
-    return fallback;
-  } catch (e) {
-    return fallback;
-  }
-}
-
-function saveJSON(key, value) {
-  try {
-    localStorage.setItem(key, JSON.stringify(value));
-    return { ok: true };
-  } catch (e) {
-    console.error("Error guardando en localStorage", key, e);
-    return { ok: false, error: String(e.message || e) };
-  }
-}
-
-/* ------------------------------------------------------------------ */
-/*  App principal                                                      */
+/*  App principal con Firebase Firestore                              */
 /* ------------------------------------------------------------------ */
 export default function BarberiaApp() {
   useGoogleFonts();
-  const [config, setConfig] = useState(null);
-  const [appointments, setAppointments] = useState(null);
+  const [config, setConfig] = useState(DEFAULT_CONFIG);
+  const [appointments, setAppointments] = useState([]);
   const [ready, setReady] = useState(false);
   const [view, setView] = useState("client"); // client | adminLogin | admin
   const [saveError, setSaveError] = useState("");
 
+  // Escuchar CITAS desde Firestore en tiempo real
   useEffect(() => {
-    let cfg = loadJSON(CONFIG_KEY, null);
-    const appts = loadJSON(APPTS_KEY, []);
-    if (!cfg) {
-      cfg = DEFAULT_CONFIG;
-      saveJSON(CONFIG_KEY, DEFAULT_CONFIG);
+    const unsubscribeAppts = onSnapshot(
+      collection(db, "citas"),
+      (snapshot) => {
+        const appts = snapshot.docs.map((doc) => ({
+          id: doc.id,
+          ...doc.data(),
+        }));
+        setAppointments(appts);
+        setReady(true);
+      },
+      (error) => {
+        console.error("Error cargando citas de Firebase:", error);
+        setSaveError("Error al conectar con la base de datos de citas.");
+        setReady(true);
+      }
+    );
+
+    return () => unsubscribeAppts();
+  }, []);
+
+  // Agregar nueva cita a Firestore
+  const handleBookAppointment = async (newAppt) => {
+    try {
+      await addDoc(collection(db, "citas"), newAppt);
+      return true;
+    } catch (error) {
+      console.error("Error al guardar cita en Firebase:", error);
+      setSaveError("No se pudo guardar la cita en la nube.");
+      return false;
     }
-    setConfig(cfg);
-    setAppointments(appts || []);
-    setReady(true);
-  }, []);
+  };
 
-  const persistConfig = useCallback((next) => {
-    setConfig(next);
-    const result = saveJSON(CONFIG_KEY, next);
-    setSaveError(result.ok ? "" : `No se pudo guardar (${result.error}).`);
-  }, []);
+  // Actualizar estado de una cita
+  const handleUpdateStatus = async (id, status) => {
+    try {
+      const apptRef = doc(db, "citas", id);
+      await updateDoc(apptRef, { status });
+    } catch (error) {
+      console.error("Error al actualizar la cita:", error);
+      setSaveError("No se pudo actualizar la cita.");
+    }
+  };
 
-  const persistAppointments = useCallback((next) => {
-    setAppointments(next);
-    const result = saveJSON(APPTS_KEY, next);
-    setSaveError(result.ok ? "" : `No se pudo guardar la cita (${result.error}).`);
-    return result.ok;
-  }, []);
+  // Eliminar una cita
+  const handleRemoveAppointment = async (id) => {
+    try {
+      await deleteDoc(doc(db, "citas", id));
+    } catch (error) {
+      console.error("Error al eliminar la cita:", error);
+      setSaveError("No se pudo eliminar la cita.");
+    }
+  };
 
   if (!ready) {
     return (
@@ -199,7 +208,9 @@ export default function BarberiaApp() {
         className="w-full flex flex-col items-center justify-center gap-4 p-10 text-white"
       >
         <BarberSpinner size={56} />
-        <p style={{ color: C.muted }} className="text-sm tracking-wide">Cargando…</p>
+        <p style={{ color: C.muted }} className="text-sm tracking-wide">
+          Cargando datos desde la nube…
+        </p>
       </div>
     );
   }
@@ -215,7 +226,7 @@ export default function BarberiaApp() {
         <ClientBooking
           config={config}
           appointments={appointments}
-          onBook={persistAppointments}
+          onBook={handleBookAppointment}
           onGoAdmin={() => setView("adminLogin")}
         />
       )}
@@ -230,8 +241,9 @@ export default function BarberiaApp() {
         <AdminPanel
           config={config}
           appointments={appointments}
-          setConfig={persistConfig}
-          setAppointments={persistAppointments}
+          setConfig={setConfig}
+          onUpdateStatus={handleUpdateStatus}
+          onRemoveAppt={handleRemoveAppointment}
           onExit={() => setView("client")}
         />
       )}
@@ -285,7 +297,7 @@ function Header({ config }) {
 }
 
 /* ------------------------------------------------------------------ */
-/*  Flujo de reserva del cliente                                       */
+/*  Flujo de reserva del cliente                                      */
 /* ------------------------------------------------------------------ */
 function ClientBooking({ config, appointments, onBook, onGoAdmin }) {
   const [step, setStep] = useState(1);
@@ -364,8 +376,7 @@ function ClientBooking({ config, appointments, onBook, onGoAdmin }) {
       setStep(3);
       return;
     }
-    const appt = {
-      id: genId(),
+    const apptData = {
       date: dKey,
       time,
       duration: service.duration,
@@ -377,10 +388,11 @@ function ClientBooking({ config, appointments, onBook, onGoAdmin }) {
       status: "confirmed",
       createdAt: new Date().toISOString(),
     };
-    const ok = onBook([...appointments, appt]);
+
+    const ok = await onBook(apptData);
     setSubmitting(false);
     if (ok) {
-      setLastAppt(appt);
+      setLastAppt(apptData);
       setStep(5);
     } else {
       setErrorMsg("No se pudo guardar la cita. Intenta de nuevo.");
@@ -573,7 +585,7 @@ function ClientBooking({ config, appointments, onBook, onGoAdmin }) {
               </a>
             ) : (
               <p style={{ color: C.muted }} className="text-xs">
-                Guarda la fecha y hora. El barbero verá tu cita en su panel.
+                Guarda la fecha y hora. El barbero verá tu cita en su panel en tiempo real.
               </p>
             )}
             <button onClick={resetAll} style={{ color: C.cyan }} className="text-sm underline mt-2">
@@ -632,7 +644,7 @@ function IconBtn({ onClick, icon, label, color }) {
 }
 
 /* ------------------------------------------------------------------ */
-/*  Login del admin (barbero)                                          */
+/*  Login del admin (barbero)                                         */
 /* ------------------------------------------------------------------ */
 function AdminLogin({ config, onSuccess, onBack }) {
   const [pw, setPw] = useState("");
@@ -674,9 +686,9 @@ function AdminLogin({ config, onSuccess, onBack }) {
 }
 
 /* ------------------------------------------------------------------ */
-/*  Panel del barbero                                                  */
+/*  Panel del barbero                                                 */
 /* ------------------------------------------------------------------ */
-function AdminPanel({ config, appointments, setConfig, setAppointments, onExit }) {
+function AdminPanel({ config, appointments, setConfig, onUpdateStatus, onRemoveAppt, onExit }) {
   const [tab, setTab] = useState("agenda"); // agenda | settings
   return (
     <div style={{ backgroundColor: C.bg, minHeight: "600px" }} className="flex flex-col">
@@ -696,7 +708,11 @@ function AdminPanel({ config, appointments, setConfig, setAppointments, onExit }
       </div>
       <div className="flex-1 px-5 py-5 max-w-lg w-full mx-auto">
         {tab === "agenda" && (
-          <AgendaTab config={config} appointments={appointments} setAppointments={setAppointments} />
+          <AgendaTab 
+            appointments={appointments} 
+            onUpdateStatus={onUpdateStatus} 
+            onRemoveAppt={onRemoveAppt} 
+          />
         )}
         {tab === "settings" && (
           <SettingsTab config={config} setConfig={setConfig} />
@@ -718,7 +734,7 @@ function TabButton({ active, onClick, icon, label }) {
   );
 }
 
-function AgendaTab({ config, appointments, setAppointments }) {
+function AgendaTab({ appointments, onUpdateStatus, onRemoveAppt }) {
   const todayKey = dateKey(new Date());
 
   const upcoming = useMemo(() => {
@@ -735,14 +751,6 @@ function AgendaTab({ config, appointments, setAppointments }) {
     });
     return map;
   }, [upcoming]);
-
-  const updateStatus = (id, status) => {
-    setAppointments(appointments.map((a) => (a.id === id ? { ...a, status } : a)));
-  };
-
-  const removeAppt = (id) => {
-    setAppointments(appointments.filter((a) => a.id !== id));
-  };
 
   return (
     <div>
@@ -788,12 +796,12 @@ function AgendaTab({ config, appointments, setAppointments }) {
                   <p style={{ color: C.muted }} className="text-xs">{a.clientName} · {a.clientPhone}</p>
                   <div className="flex gap-2 mt-3 pt-2 border-t border-zinc-800">
                     {a.status !== "done" && (
-                      <IconBtn onClick={() => updateStatus(a.id, "done")} icon={<CheckCircle2 size={14} />} label="Hecha" color={C.green} />
+                      <IconBtn onClick={() => onUpdateStatus(a.id, "done")} icon={<CheckCircle2 size={14} />} label="Hecha" color={C.green} />
                     )}
                     {a.status !== "cancelled" && (
-                      <IconBtn onClick={() => updateStatus(a.id, "cancelled")} icon={<Ban size={14} />} label="Cancelar" color={C.red} />
+                      <IconBtn onClick={() => onUpdateStatus(a.id, "cancelled")} icon={<Ban size={14} />} label="Cancelar" color={C.red} />
                     )}
-                    <IconBtn onClick={() => removeAppt(a.id)} icon={<Trash2 size={14} />} label="Eliminar" color={C.muted} />
+                    <IconBtn onClick={() => onRemoveAppt(a.id)} icon={<Trash2 size={14} />} label="Eliminar" color={C.muted} />
                   </div>
                 </div>
               ))}
@@ -834,7 +842,7 @@ function SettingsTab({ config, setConfig }) {
           value={shopName}
           onChange={(e) => setShopName(e.target.value)}
           style={{ backgroundColor: C.card, borderColor: C.cardBorder, color: C.white }}
-          className="w-full border rounded-lg px-3 py-2 text-sm outline-none"
+          className="border rounded-lg px-4 py-2 text-sm w-full outline-none"
         />
       </div>
       <div>
@@ -844,36 +852,36 @@ function SettingsTab({ config, setConfig }) {
           value={tagline}
           onChange={(e) => setTagline(e.target.value)}
           style={{ backgroundColor: C.card, borderColor: C.cardBorder, color: C.white }}
-          className="w-full border rounded-lg px-3 py-2 text-sm outline-none"
+          className="border rounded-lg px-4 py-2 text-sm w-full outline-none"
         />
       </div>
       <div>
-        <label style={{ color: C.muted }} className="text-xs mb-1 block">Número de WhatsApp (con código país, ej: 573001234567)</label>
+        <label style={{ color: C.muted }} className="text-xs mb-1 block">Número de WhatsApp (con código de país, ej: 573001234567)</label>
         <input
           type="text"
           value={whatsapp}
           onChange={(e) => setWhatsapp(e.target.value)}
           style={{ backgroundColor: C.card, borderColor: C.cardBorder, color: C.white }}
-          className="w-full border rounded-lg px-3 py-2 text-sm outline-none"
+          className="border rounded-lg px-4 py-2 text-sm w-full outline-none"
         />
       </div>
       <div>
-        <label style={{ color: C.muted }} className="text-xs mb-1 block">Contraseña de Administrador</label>
+        <label style={{ color: C.muted }} className="text-xs mb-1 block">Contraseña del Panel</label>
         <input
-          type="password"
+          type="text"
           value={adminPassword}
           onChange={(e) => setAdminPassword(e.target.value)}
           style={{ backgroundColor: C.card, borderColor: C.cardBorder, color: C.white }}
-          className="w-full border rounded-lg px-3 py-2 text-sm outline-none"
+          className="border rounded-lg px-4 py-2 text-sm w-full outline-none"
         />
       </div>
 
       <button
         onClick={saveSettings}
-        style={{ backgroundColor: C.magenta, color: C.bg }}
+        style={{ backgroundColor: C.cyan, color: C.bg }}
         className="rounded-lg py-3 mt-2 font-semibold flex items-center justify-center gap-2"
       >
-        <Check size={16} /> {saved ? "¡Guardado!" : "Guardar cambios"}
+        <Check size={18} /> {saved ? "¡Guardado!" : "Guardar cambios"}
       </button>
     </div>
   );
