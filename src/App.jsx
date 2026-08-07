@@ -70,7 +70,7 @@ function genId() {
 /* ------------------------------------------------------------------ */
 const DEFAULT_CONFIG = {
   shopName: "Como Nuevos Barbería",
-  tagline: "Estilo & Estructura",
+  tagline: "",
   whatsapp: "",
   address: "",
   adminPassword: "1234",
