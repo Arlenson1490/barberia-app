@@ -66,7 +66,7 @@ function genId() {
 }
 
 /* ------------------------------------------------------------------ */
-/*  Configuración por defecto                                         */
+/*  Configuración por defecto                                          */
 /* ------------------------------------------------------------------ */
 const DEFAULT_CONFIG = {
   shopName: "Como Nuevos Barbería",
@@ -134,26 +134,42 @@ function StripeDivider() {
 }
 
 /* ------------------------------------------------------------------ */
-/*  Storage helpers (Uso de localStorage local)                        */
+/*  Storage helpers (con manejo de errores)                            */
 /* ------------------------------------------------------------------ */
-function loadJSON(key, fallback) {
+async function loadJSON(key, fallback) {
   try {
-    const raw = localStorage.getItem(key);
-    if (raw) return JSON.parse(raw);
+    const res = await window.storage.get(key, true);
+    if (res && res.value) return JSON.parse(res.value);
     return fallback;
   } catch (e) {
     return fallback;
   }
 }
-
-function saveJSON(key, value) {
-  try {
-    localStorage.setItem(key, JSON.stringify(value));
-    return { ok: true };
-  } catch (e) {
-    console.error("Error guardando en localStorage", key, e);
-    return { ok: false, error: String(e.message || e) };
+async function saveJSON(key, value, retries = 2) {
+  const serialized = JSON.stringify(value);
+  let lastError = null;
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    try {
+      const res = await window.storage.set(key, serialized, true);
+      if (res) return { ok: true };
+    } catch (e) {
+      lastError = e;
+      console.error("storage.set falló", key, e);
+    }
+    if (attempt < retries) {
+      await new Promise((r) => setTimeout(r, 350));
+    }
   }
+  // Última red de seguridad: puede que el guardado sí haya ocurrido en el
+  // servidor aunque la respuesta al cliente haya fallado. Verificamos antes
+  // de reportar un error falso.
+  try {
+    const check = await window.storage.get(key, true);
+    if (check && check.value === serialized) return { ok: true };
+  } catch (e) {
+    lastError = lastError || e;
+  }
+  return { ok: false, error: lastError ? String(lastError.message || lastError) : "Error desconocido" };
 }
 
 /* ------------------------------------------------------------------ */
@@ -168,27 +184,32 @@ export default function BarberiaApp() {
   const [saveError, setSaveError] = useState("");
 
   useEffect(() => {
-    let cfg = loadJSON(CONFIG_KEY, null);
-    const appts = loadJSON(APPTS_KEY, []);
-    if (!cfg) {
-      cfg = DEFAULT_CONFIG;
-      saveJSON(CONFIG_KEY, DEFAULT_CONFIG);
-    }
-    setConfig(cfg);
-    setAppointments(appts || []);
-    setReady(true);
+    (async () => {
+      const [cfg, appts] = await Promise.all([
+        loadJSON(CONFIG_KEY, null),
+        loadJSON(APPTS_KEY, []),
+      ]);
+      let finalCfg = cfg;
+      if (!finalCfg) {
+        finalCfg = DEFAULT_CONFIG;
+        await saveJSON(CONFIG_KEY, DEFAULT_CONFIG);
+      }
+      setConfig(finalCfg);
+      setAppointments(appts || []);
+      setReady(true);
+    })();
   }, []);
 
-  const persistConfig = useCallback((next) => {
+  const persistConfig = useCallback(async (next) => {
     setConfig(next);
-    const result = saveJSON(CONFIG_KEY, next);
-    setSaveError(result.ok ? "" : `No se pudo guardar (${result.error}).`);
+    const result = await saveJSON(CONFIG_KEY, next);
+    setSaveError(result.ok ? "" : `No se pudo guardar (${result.error}). Se seguirá viendo en esta sesión, pero puede no persistir.`);
   }, []);
 
-  const persistAppointments = useCallback((next) => {
+  const persistAppointments = useCallback(async (next) => {
     setAppointments(next);
-    const result = saveJSON(APPTS_KEY, next);
-    setSaveError(result.ok ? "" : `No se pudo guardar la cita (${result.error}).`);
+    const result = await saveJSON(APPTS_KEY, next);
+    setSaveError(result.ok ? "" : `No se pudo guardar la cita (${result.error}). Se seguirá viendo en esta sesión, pero puede no persistir.`);
     return result.ok;
   }, []);
 
@@ -196,7 +217,7 @@ export default function BarberiaApp() {
     return (
       <div
         style={{ backgroundColor: C.bg, minHeight: "500px", ...bodyFont }}
-        className="w-full flex flex-col items-center justify-center gap-4 p-10 text-white"
+        className="w-full flex flex-col items-center justify-center gap-4 p-10"
       >
         <BarberSpinner size={56} />
         <p style={{ color: C.muted }} className="text-sm tracking-wide">Cargando…</p>
@@ -240,7 +261,7 @@ export default function BarberiaApp() {
 }
 
 /* ------------------------------------------------------------------ */
-/*  Encabezado compartido (cliente)                                   */
+/*  Encabezado compartido (cliente) — nombre con resplandor neón       */
 /* ------------------------------------------------------------------ */
 function Header({ config }) {
   return (
@@ -288,9 +309,9 @@ function Header({ config }) {
 /*  Flujo de reserva del cliente                                       */
 /* ------------------------------------------------------------------ */
 function ClientBooking({ config, appointments, onBook, onGoAdmin }) {
-  const [step, setStep] = useState(1);
+  const [step, setStep] = useState(1); // 1 servicio, 2 fecha, 3 hora, 4 datos, 5 confirmado
   const [service, setService] = useState(null);
-  const [date, setDate] = useState(null);
+  const [date, setDate] = useState(null); // Date object
   const [time, setTime] = useState(null);
   const [name, setName] = useState("");
   const [phone, setPhone] = useState("");
@@ -350,6 +371,7 @@ function ClientBooking({ config, appointments, onBook, onGoAdmin }) {
   const confirmBooking = async () => {
     setSubmitting(true);
     setErrorMsg("");
+    // re-chequeo rápido de choque antes de guardar
     const dKey = dateKey(date);
     const stillFree = !appointments.some((a) => {
       if (a.date !== dKey || a.status === "cancelled") return false;
@@ -377,7 +399,7 @@ function ClientBooking({ config, appointments, onBook, onGoAdmin }) {
       status: "confirmed",
       createdAt: new Date().toISOString(),
     };
-    const ok = onBook([...appointments, appt]);
+    const ok = await onBook([...appointments, appt]);
     setSubmitting(false);
     if (ok) {
       setLastAppt(appt);
@@ -401,6 +423,7 @@ function ClientBooking({ config, appointments, onBook, onGoAdmin }) {
       <StripeDivider />
 
       <div className="flex-1 px-5 py-6 max-w-md w-full mx-auto">
+        {/* Paso 1: servicio */}
         {step === 1 && (
           <div>
             <StepTitle icon={<Scissors size={18} />} text="Elige tu servicio" />
@@ -432,6 +455,7 @@ function ClientBooking({ config, appointments, onBook, onGoAdmin }) {
           </div>
         )}
 
+        {/* Paso 2: fecha */}
         {step === 2 && (
           <div>
             <BackBar onBack={() => setStep(1)} label={service?.name} />
@@ -468,6 +492,7 @@ function ClientBooking({ config, appointments, onBook, onGoAdmin }) {
           </div>
         )}
 
+        {/* Paso 3: hora */}
         {step === 3 && (
           <div>
             <BackBar
@@ -475,7 +500,9 @@ function ClientBooking({ config, appointments, onBook, onGoAdmin }) {
               label={date ? `${DAY_NAMES[date.getDay()]} ${date.getDate()} ${MONTHS[date.getMonth()]}` : ""}
             />
             <StepTitle icon={<Clock size={18} />} text="Elige la hora" />
-            {errorMsg && <p style={{ color: C.red }} className="text-xs mt-2">{errorMsg}</p>}
+            {errorMsg && (
+              <p style={{ color: C.red }} className="text-xs mt-2">{errorMsg}</p>
+            )}
             {slots.length === 0 ? (
               <p style={{ color: C.muted }} className="text-sm mt-4">
                 No hay horarios disponibles ese día. Prueba con otra fecha.
@@ -504,6 +531,7 @@ function ClientBooking({ config, appointments, onBook, onGoAdmin }) {
           </div>
         )}
 
+        {/* Paso 4: datos del cliente */}
         {step === 4 && (
           <div>
             <BackBar onBack={() => setStep(3)} label={time} />
@@ -549,6 +577,7 @@ function ClientBooking({ config, appointments, onBook, onGoAdmin }) {
           </div>
         )}
 
+        {/* Paso 5: confirmación */}
         {step === 5 && lastAppt && (
           <div className="flex flex-col items-center text-center gap-4 pt-6">
             <div style={{ backgroundColor: C.green }} className="rounded-full p-4">
@@ -619,18 +648,6 @@ function SummaryRow({ label, value, bold }) {
   );
 }
 
-function IconBtn({ onClick, icon, label, color }) {
-  return (
-    <button
-      onClick={onClick}
-      style={{ color: color, borderColor: C.cardBorder }}
-      className="border rounded px-2 py-1 flex items-center gap-1 text-xs"
-    >
-      {icon} {label}
-    </button>
-  );
-}
-
 /* ------------------------------------------------------------------ */
 /*  Login del admin (barbero)                                          */
 /* ------------------------------------------------------------------ */
@@ -674,7 +691,7 @@ function AdminLogin({ config, onSuccess, onBack }) {
 }
 
 /* ------------------------------------------------------------------ */
-/*  Panel del barbero                                                  */
+/*  Panel del barbero                                                   */
 /* ------------------------------------------------------------------ */
 function AdminPanel({ config, appointments, setConfig, setAppointments, onExit }) {
   const [tab, setTab] = useState("agenda"); // agenda | settings
@@ -719,6 +736,7 @@ function TabButton({ active, onClick, icon, label }) {
 }
 
 function AgendaTab({ config, appointments, setAppointments }) {
+  const [showManual, setShowManual] = useState(false);
   const todayKey = dateKey(new Date());
 
   const upcoming = useMemo(() => {
@@ -739,7 +757,6 @@ function AgendaTab({ config, appointments, setAppointments }) {
   const updateStatus = (id, status) => {
     setAppointments(appointments.map((a) => (a.id === id ? { ...a, status } : a)));
   };
-
   const removeAppt = (id) => {
     setAppointments(appointments.filter((a) => a.id !== id));
   };
@@ -748,6 +765,13 @@ function AgendaTab({ config, appointments, setAppointments }) {
     <div>
       <div className="flex items-center justify-between mb-4">
         <h3 style={{ ...displayFont, color: C.white }} className="text-lg uppercase font-semibold">Próximas citas</h3>
+        <button
+          onClick={() => setShowManual(true)}
+          style={{ backgroundColor: C.magenta, color: C.bg }}
+          className="rounded-lg px-3 py-2 text-xs flex items-center gap-1 font-semibold"
+        >
+          <Plus size={14} /> Manual
+        </button>
       </div>
 
       {Object.keys(grouped).length === 0 && (
@@ -786,14 +810,14 @@ function AgendaTab({ config, appointments, setAppointments }) {
                   </div>
                   <p style={{ color: C.white }} className="text-sm mt-1">{a.serviceName} · {formatCOP(a.price)}</p>
                   <p style={{ color: C.muted }} className="text-xs">{a.clientName} · {a.clientPhone}</p>
-                  <div className="flex gap-2 mt-3 pt-2 border-t border-zinc-800">
+                  <div className="flex gap-2 mt-2">
                     {a.status !== "done" && (
                       <IconBtn onClick={() => updateStatus(a.id, "done")} icon={<CheckCircle2 size={14} />} label="Hecha" color={C.green} />
                     )}
                     {a.status !== "cancelled" && (
                       <IconBtn onClick={() => updateStatus(a.id, "cancelled")} icon={<Ban size={14} />} label="Cancelar" color={C.red} />
                     )}
-                    <IconBtn onClick={() => removeAppt(a.id)} icon={<Trash2 size={14} />} label="Eliminar" color={C.muted} />
+                    <IconBtn onClick={() => removeAppt(a.id)} icon={<Trash2 size={14} />} label="Borrar" color={C.muted} />
                   </div>
                 </div>
               ))}
@@ -801,80 +825,237 @@ function AgendaTab({ config, appointments, setAppointments }) {
           </div>
         );
       })}
+
+      {showManual && (
+        <ManualApptModal
+          config={config}
+          appointments={appointments}
+          onClose={() => setShowManual(false)}
+          onSave={(appt) => {
+            setAppointments([...appointments, appt]);
+            setShowManual(false);
+          }}
+        />
+      )}
     </div>
   );
 }
 
-function SettingsTab({ config, setConfig }) {
-  const [shopName, setShopName] = useState(config.shopName || "");
-  const [tagline, setTagline] = useState(config.tagline || "");
-  const [whatsapp, setWhatsapp] = useState(config.whatsapp || "");
-  const [adminPassword, setAdminPassword] = useState(config.adminPassword || "");
-  const [saved, setSaved] = useState(false);
+function IconBtn({ onClick, icon, label, color }) {
+  return (
+    <button onClick={onClick} style={{ color, borderColor: C.cardBorder }} className="flex items-center gap-1 text-xs border rounded px-2 py-1" >
+      {icon} {label}
+    </button>
+  );
+}
 
-  const saveSettings = () => {
-    setConfig({
-      ...config,
-      shopName,
-      tagline,
-      whatsapp,
-      adminPassword,
+function ManualApptModal({ config, appointments, onClose, onSave }) {
+  const [serviceId, setServiceId] = useState(config.services[0]?.id || "");
+  const [date, setDate] = useState(dateKey(new Date()));
+  const [time, setTime] = useState("09:00");
+  const [name, setName] = useState("");
+  const [phone, setPhone] = useState("");
+  const service = config.services.find((s) => s.id === serviceId);
+
+  const save = () => {
+    if (!name.trim() || !service) return;
+    onSave({
+      id: genId(),
+      date,
+      time,
+      duration: service.duration,
+      serviceId: service.id,
+      serviceName: service.name,
+      price: service.price,
+      clientName: name.trim(),
+      clientPhone: phone.trim(),
+      status: "confirmed",
+      createdAt: new Date().toISOString(),
     });
-    setSaved(true);
-    setTimeout(() => setSaved(false), 2000);
   };
 
   return (
-    <div className="flex flex-col gap-4">
-      <h3 style={{ ...displayFont, color: C.white }} className="text-lg uppercase font-semibold">Configuración General</h3>
-      <div>
-        <label style={{ color: C.muted }} className="text-xs mb-1 block">Nombre del negocio</label>
-        <input
-          type="text"
-          value={shopName}
-          onChange={(e) => setShopName(e.target.value)}
-          style={{ backgroundColor: C.card, borderColor: C.cardBorder, color: C.white }}
-          className="w-full border rounded-lg px-3 py-2 text-sm outline-none"
-        />
+    <div className="fixed inset-0 flex items-center justify-center p-4" style={{ backgroundColor: "rgba(0,0,0,0.7)", zIndex: 50 }}>
+      <div style={{ backgroundColor: C.bg2, borderColor: C.cardBorder }} className="border rounded-lg p-5 w-full max-w-sm">
+        <h4 style={{ ...displayFont, color: C.white }} className="text-lg uppercase mb-3 font-semibold">Cita manual</h4>
+        <div className="flex flex-col gap-2">
+          <select value={serviceId} onChange={(e) => setServiceId(e.target.value)} style={{ backgroundColor: C.card, color: C.white, borderColor: C.cardBorder }} className="border rounded px-3 py-2 text-sm">
+            {config.services.map((s) => (
+              <option key={s.id} value={s.id}>{s.name}</option>
+            ))}
+          </select>
+          <input type="date" value={date} onChange={(e) => setDate(e.target.value)} style={{ backgroundColor: C.card, color: C.white, borderColor: C.cardBorder }} className="border rounded px-3 py-2 text-sm" />
+          <input type="time" value={time} onChange={(e) => setTime(e.target.value)} style={{ backgroundColor: C.card, color: C.white, borderColor: C.cardBorder }} className="border rounded px-3 py-2 text-sm" />
+          <input type="text" placeholder="Nombre del cliente" value={name} onChange={(e) => setName(e.target.value)} style={{ backgroundColor: C.card, color: C.white, borderColor: C.cardBorder }} className="border rounded px-3 py-2 text-sm" />
+          <input type="tel" placeholder="Celular (opcional)" value={phone} onChange={(e) => setPhone(e.target.value)} style={{ backgroundColor: C.card, color: C.white, borderColor: C.cardBorder }} className="border rounded px-3 py-2 text-sm" />
+        </div>
+        <div className="flex gap-2 mt-4">
+          <button onClick={onClose} style={{ color: C.white, borderColor: C.cardBorder }} className="flex-1 rounded py-2 text-sm border">Cancelar</button>
+          <button onClick={save} style={{ backgroundColor: C.magenta, color: C.bg }} className="flex-1 rounded py-2 text-sm font-semibold">Guardar</button>
+        </div>
       </div>
-      <div>
-        <label style={{ color: C.muted }} className="text-xs mb-1 block">Slogan / Subtítulo</label>
-        <input
-          type="text"
-          value={tagline}
-          onChange={(e) => setTagline(e.target.value)}
-          style={{ backgroundColor: C.card, borderColor: C.cardBorder, color: C.white }}
-          className="w-full border rounded-lg px-3 py-2 text-sm outline-none"
-        />
-      </div>
-      <div>
-        <label style={{ color: C.muted }} className="text-xs mb-1 block">Número de WhatsApp (con código país, ej: 573001234567)</label>
-        <input
-          type="text"
-          value={whatsapp}
-          onChange={(e) => setWhatsapp(e.target.value)}
-          style={{ backgroundColor: C.card, borderColor: C.cardBorder, color: C.white }}
-          className="w-full border rounded-lg px-3 py-2 text-sm outline-none"
-        />
-      </div>
-      <div>
-        <label style={{ color: C.muted }} className="text-xs mb-1 block">Contraseña de Administrador</label>
-        <input
-          type="password"
-          value={adminPassword}
-          onChange={(e) => setAdminPassword(e.target.value)}
-          style={{ backgroundColor: C.card, borderColor: C.cardBorder, color: C.white }}
-          className="w-full border rounded-lg px-3 py-2 text-sm outline-none"
-        />
-      </div>
+    </div>
+  );
+}
 
-      <button
-        onClick={saveSettings}
-        style={{ backgroundColor: C.magenta, color: C.bg }}
-        className="rounded-lg py-3 mt-2 font-semibold flex items-center justify-center gap-2"
-      >
-        <Check size={16} /> {saved ? "¡Guardado!" : "Guardar cambios"}
+/* ------------------------------------------------------------------ */
+/*  Ajustes (negocio, horarios, servicios, contraseña)                  */
+/* ------------------------------------------------------------------ */
+function SettingsTab({ config, setConfig }) {
+  const [local, setLocal] = useState(config);
+  const [savedFlash, setSavedFlash] = useState(false);
+  const [editingService, setEditingService] = useState(null); // {id?, name, duration, price}
+
+  const save = async () => {
+    await setConfig(local);
+    setSavedFlash(true);
+    setTimeout(() => setSavedFlash(false), 1500);
+  };
+
+  const updateHour = (dow, field, value) => {
+    setLocal({
+      ...local,
+      hours: { ...local.hours, [dow]: { ...local.hours[dow], [field]: value } },
+    });
+  };
+
+  const saveService = (svc) => {
+    let services;
+    if (svc.id) {
+      services = local.services.map((s) => (s.id === svc.id ? svc : s));
+    } else {
+      services = [...local.services, { ...svc, id: genId() }];
+    }
+    setLocal({ ...local, services });
+    setEditingService(null);
+  };
+
+  const deleteService = (id) => {
+    setLocal({ ...local, services: local.services.filter((s) => s.id !== id) });
+  };
+
+  return (
+    <div className="flex flex-col gap-6 pb-24">
+      <section>
+        <h3 style={{ ...displayFont, color: C.white }} className="text-base uppercase mb-2 font-semibold">Negocio</h3>
+        <div className="flex flex-col gap-2">
+          <Labeled label="Nombre">
+            <input value={local.shopName} onChange={(e) => setLocal({ ...local, shopName: e.target.value })} style={{ backgroundColor: C.card, color: C.white, borderColor: C.cardBorder }} className="border rounded px-3 py-2 text-sm w-full" />
+          </Labeled>
+          <Labeled label="Eslogan (opcional)">
+            <input value={local.tagline} onChange={(e) => setLocal({ ...local, tagline: e.target.value })} style={{ backgroundColor: C.card, color: C.white, borderColor: C.cardBorder }} className="border rounded px-3 py-2 text-sm w-full" />
+          </Labeled>
+          <Labeled label="WhatsApp (con indicativo, ej: 573001234567)">
+            <input value={local.whatsapp} onChange={(e) => setLocal({ ...local, whatsapp: e.target.value })} style={{ backgroundColor: C.card, color: C.white, borderColor: C.cardBorder }} className="border rounded px-3 py-2 text-sm w-full" />
+          </Labeled>
+        </div>
+      </section>
+
+      <section>
+        <h3 style={{ ...displayFont, color: C.white }} className="text-base uppercase mb-2 font-semibold">Horarios</h3>
+        <div className="flex flex-col gap-2">
+          {DAY_NAMES.map((name, dow) => {
+            const h = local.hours[dow];
+            return (
+              <div key={dow} style={{ backgroundColor: C.card, borderColor: C.cardBorder }} className="border rounded-lg p-3 flex items-center gap-2 flex-wrap">
+                <span style={{ color: C.white }} className="text-sm w-20">{name}</span>
+                <label className="flex items-center gap-1 text-xs" style={{ color: C.muted }}>
+                  <input type="checkbox" checked={!h.closed} onChange={(e) => updateHour(dow, "closed", !e.target.checked)} />
+                  Abierto
+                </label>
+                {!h.closed && (
+                  <>
+                    <input type="time" value={h.open} onChange={(e) => updateHour(dow, "open", e.target.value)} style={{ backgroundColor: C.bg2, color: C.white, borderColor: C.cardBorder }} className="border rounded px-2 py-1 text-xs" />
+                    <span className="text-xs" style={{ color: C.muted }}>a</span>
+                    <input type="time" value={h.close} onChange={(e) => updateHour(dow, "close", e.target.value)} style={{ backgroundColor: C.bg2, color: C.white, borderColor: C.cardBorder }} className="border rounded px-2 py-1 text-xs" />
+                  </>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      </section>
+
+      <section>
+        <div className="flex items-center justify-between mb-2">
+          <h3 style={{ ...displayFont, color: C.white }} className="text-base uppercase font-semibold">Servicios</h3>
+          <button onClick={() => setEditingService({ name: "", duration: 30, price: 0 })} style={{ backgroundColor: C.magenta, color: C.bg }} className="rounded px-3 py-1 text-xs flex items-center gap-1 font-semibold">
+            <Plus size={14} /> Añadir
+          </button>
+        </div>
+        <div className="flex flex-col gap-2">
+          {local.services.map((s) => (
+            <div key={s.id} style={{ backgroundColor: C.card, borderColor: C.cardBorder }} className="border rounded-lg p-3 flex items-center justify-between">
+              <div>
+                <p style={{ color: C.white }} className="text-sm font-medium">{s.name}</p>
+                <p style={{ color: C.muted }} className="text-xs">{s.duration} min · {formatCOP(s.price)}</p>
+              </div>
+              <div className="flex gap-2">
+                <button onClick={() => setEditingService(s)} style={{ color: C.cyan }}><Pencil size={16} /></button>
+                <button onClick={() => deleteService(s.id)} style={{ color: C.red }}><Trash2 size={16} /></button>
+              </div>
+            </div>
+          ))}
+          {local.services.length === 0 && <p style={{ color: C.muted }} className="text-xs">Añade al menos un servicio.</p>}
+        </div>
+      </section>
+
+      <section>
+        <h3 style={{ ...displayFont, color: C.white }} className="text-base uppercase mb-2 font-semibold">Seguridad</h3>
+        <Labeled label="Contraseña del panel">
+          <input value={local.adminPassword} onChange={(e) => setLocal({ ...local, adminPassword: e.target.value })} style={{ backgroundColor: C.card, color: C.white, borderColor: C.cardBorder }} className="border rounded px-3 py-2 text-sm w-full" />
+        </Labeled>
+        <p style={{ color: C.mutedDim }} className="text-[11px] mt-1">
+          Esta contraseña es solo un filtro básico para que clientes casuales no entren al panel — no la uses para datos sensibles.
+        </p>
+      </section>
+
+      <button onClick={save} style={{ backgroundColor: C.magenta, color: C.bg }} className="rounded-lg py-3 font-semibold flex items-center justify-center gap-2">
+        {savedFlash ? <Check size={18} /> : null} {savedFlash ? "Guardado" : "Guardar cambios"}
       </button>
+
+      {editingService && (
+        <ServiceModal service={editingService} onClose={() => setEditingService(null)} onSave={saveService} />
+      )}
+    </div>
+  );
+}
+
+function Labeled({ label, children }) {
+  return (
+    <div className="flex flex-col gap-1">
+      <span style={{ color: C.muted }} className="text-xs">{label}</span>
+      {children}
+    </div>
+  );
+}
+
+function ServiceModal({ service, onClose, onSave }) {
+  const [name, setName] = useState(service.name);
+  const [duration, setDuration] = useState(service.duration);
+  const [price, setPrice] = useState(service.price);
+  return (
+    <div className="fixed inset-0 flex items-center justify-center p-4" style={{ backgroundColor: "rgba(0,0,0,0.7)", zIndex: 50 }}>
+      <div style={{ backgroundColor: C.bg2, borderColor: C.cardBorder }} className="border rounded-lg p-5 w-full max-w-sm">
+        <h4 style={{ ...displayFont, color: C.white }} className="text-lg uppercase mb-3 font-semibold">
+          {service.id ? "Editar servicio" : "Nuevo servicio"}
+        </h4>
+        <div className="flex flex-col gap-2">
+          <input placeholder="Nombre" value={name} onChange={(e) => setName(e.target.value)} style={{ backgroundColor: C.card, color: C.white, borderColor: C.cardBorder }} className="border rounded px-3 py-2 text-sm" />
+          <input type="number" placeholder="Duración (min)" value={duration} onChange={(e) => setDuration(Number(e.target.value))} style={{ backgroundColor: C.card, color: C.white, borderColor: C.cardBorder }} className="border rounded px-3 py-2 text-sm" />
+          <input type="number" placeholder="Precio (COP)" value={price} onChange={(e) => setPrice(Number(e.target.value))} style={{ backgroundColor: C.card, color: C.white, borderColor: C.cardBorder }} className="border rounded px-3 py-2 text-sm" />
+        </div>
+        <div className="flex gap-2 mt-4">
+          <button onClick={onClose} style={{ color: C.white, borderColor: C.cardBorder }} className="flex-1 rounded py-2 text-sm border">Cancelar</button>
+          <button
+            onClick={() => onSave({ ...service, name, duration, price })}
+            style={{ backgroundColor: C.magenta, color: C.bg }}
+            className="flex-1 rounded py-2 text-sm font-semibold"
+          >
+            Guardar
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
