@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { db } from "./firebase";
 import { 
   collection, 
@@ -9,15 +9,13 @@ import {
   deleteDoc 
 } from "firebase/firestore";
 import {
-  Scissors, Calendar, Clock, User, Phone, Check, X, Settings,
-  LogOut, MessageCircle, ChevronLeft, ChevronRight, Plus, Trash2,
-  Pencil, Lock, ArrowLeft, CalendarDays, Ban, CheckCircle2,
+  Scissors, Calendar, Clock, User, Check, Settings,
+  LogOut, MessageCircle, Lock, ArrowLeft, CalendarDays, Ban, CheckCircle2,
+  Trash2
 } from "lucide-react";
 
 /* ------------------------------------------------------------------ */
-/*  DISEÑO: identidad de "Como Nuevos Barbería" — negro profundo con   */
-/*  acentos neón cian/magenta (estilo "circuito"), y una guiñada       */
-/*  clásica a la barbería en la franja/spinner tipo poste giratorio.  */
+/*  DISEÑO & ESTILOS                                                  */
 /* ------------------------------------------------------------------ */
 const C = {
   bg: "#0A0A0D",
@@ -25,9 +23,7 @@ const C = {
   card: "#16161D",
   cardBorder: "#26262F",
   cyan: "#3EEDEB",
-  cyanDim: "#1BAFAE",
   magenta: "#E93DE0",
-  magentaDim: "#A62CA1",
   white: "#F5F6FA",
   muted: "#8B92A6",
   mutedDim: "#565C6E",
@@ -54,9 +50,6 @@ function useGoogleFonts() {
 const displayFont = { fontFamily: "'Rajdhani', sans-serif" };
 const bodyFont = { fontFamily: "'Inter', sans-serif" };
 
-/* ------------------------------------------------------------------ */
-/*  Utilidades de fecha / hora                                        */
-/* ------------------------------------------------------------------ */
 const pad = (n) => n.toString().padStart(2, "0");
 const dateKey = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 const timeToMin = (t) => {
@@ -66,13 +59,11 @@ const timeToMin = (t) => {
 const minToTime = (m) => `${pad(Math.floor(m / 60))}:${pad(m % 60)}`;
 const formatCOP = (n) =>
   new Intl.NumberFormat("es-CO", { style: "currency", currency: "COP", maximumFractionDigits: 0 }).format(n || 0);
+
 const DAY_NAMES = ["Domingo", "Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado"];
 const DAY_SHORT = ["Dom", "Lun", "Mar", "Mié", "Jue", "Vie", "Sáb"];
 const MONTHS = ["ene", "feb", "mar", "abr", "may", "jun", "jul", "ago", "sep", "oct", "nov", "dic"];
 
-/* ------------------------------------------------------------------ */
-/*  Configuración por defecto                                         */
-/* ------------------------------------------------------------------ */
 const DEFAULT_CONFIG = {
   shopName: "Como Nuevos Barbería",
   tagline: "Estilo & Estructura",
@@ -96,9 +87,6 @@ const DEFAULT_CONFIG = {
   ],
 };
 
-/* ------------------------------------------------------------------ */
-/*  Spinner "poste de barbería" en clave neón                         */
-/* ------------------------------------------------------------------ */
 function BarberSpinner({ size = 40 }) {
   return (
     <div
@@ -135,18 +123,13 @@ function StripeDivider() {
   );
 }
 
-/* ------------------------------------------------------------------ */
-/*  App principal con Firebase Firestore                              */
-/* ------------------------------------------------------------------ */
 export default function BarberiaApp() {
   useGoogleFonts();
   const [config, setConfig] = useState(DEFAULT_CONFIG);
   const [appointments, setAppointments] = useState([]);
   const [ready, setReady] = useState(false);
-  const [view, setView] = useState("client"); // client | adminLogin | admin
-  const [saveError, setSaveError] = useState("");
+  const [view, setView] = useState("client");
 
-  // Escuchar CITAS desde Firestore en tiempo real
   useEffect(() => {
     const unsubscribeAppts = onSnapshot(
       collection(db, "citas"),
@@ -159,8 +142,7 @@ export default function BarberiaApp() {
         setReady(true);
       },
       (error) => {
-        console.error("Error cargando citas de Firebase:", error);
-        setSaveError("Error al conectar con la base de datos de citas.");
+        console.error("Error al escuchar Firestore:", error);
         setReady(true);
       }
     );
@@ -168,60 +150,46 @@ export default function BarberiaApp() {
     return () => unsubscribeAppts();
   }, []);
 
-  // Agregar nueva cita a Firestore
-  const handleBookAppointment = async (newAppt) => {
-    try {
-      await addDoc(collection(db, "citas"), newAppt);
-      return true;
-    } catch (error) {
-      console.error("Error al guardar cita en Firebase:", error);
-      setSaveError("No se pudo guardar la cita en la nube.");
-      return false;
-    }
+  // Envío en segundo plano sin bloquear la UI
+  const handleBookAppointment = (newAppt) => {
+    // Se guarda en la nube asíncronamente
+    addDoc(collection(db, "citas"), newAppt).catch((error) => {
+      console.error("Error al guardar en segundo plano:", error);
+    });
   };
 
-  // Actualizar estado de una cita
   const handleUpdateStatus = async (id, status) => {
     try {
-      const apptRef = doc(db, "citas", id);
-      await updateDoc(apptRef, { status });
-    } catch (error) {
-      console.error("Error al actualizar la cita:", error);
-      setSaveError("No se pudo actualizar la cita.");
+      await updateDoc(doc(db, "citas", id), { status });
+    } catch (e) {
+      console.error(e);
     }
   };
 
-  // Eliminar una cita
   const handleRemoveAppointment = async (id) => {
     try {
       await deleteDoc(doc(db, "citas", id));
-    } catch (error) {
-      console.error("Error al eliminar la cita:", error);
-      setSaveError("No se pudo eliminar la cita.");
+    } catch (e) {
+      console.error(e);
     }
   };
 
   if (!ready) {
     return (
       <div
-        style={{ backgroundColor: C.bg, minHeight: "500px", ...bodyFont }}
+        style={{ backgroundColor: C.bg, minHeight: "100vh", ...bodyFont }}
         className="w-full flex flex-col items-center justify-center gap-4 p-10 text-white"
       >
         <BarberSpinner size={56} />
         <p style={{ color: C.muted }} className="text-sm tracking-wide">
-          Cargando datos desde la nube…
+          Cargando agenda…
         </p>
       </div>
     );
   }
 
   return (
-    <div style={{ backgroundColor: C.bg, minHeight: "600px", ...bodyFont }} className="w-full">
-      {saveError && (
-        <div style={{ backgroundColor: C.red, color: C.white }} className="text-xs text-center py-2 px-4">
-          {saveError}
-        </div>
-      )}
+    <div style={{ backgroundColor: C.bg, minHeight: "100vh", ...bodyFont }} className="w-full">
       {view === "client" && (
         <ClientBooking
           config={config}
@@ -251,9 +219,6 @@ export default function BarberiaApp() {
   );
 }
 
-/* ------------------------------------------------------------------ */
-/*  Encabezado compartido (cliente)                                   */
-/* ------------------------------------------------------------------ */
 function Header({ config }) {
   return (
     <div style={{ backgroundColor: C.bg, position: "relative", overflow: "hidden" }} className="pt-8 pb-6 px-6 text-center">
@@ -296,9 +261,6 @@ function Header({ config }) {
   );
 }
 
-/* ------------------------------------------------------------------ */
-/*  Flujo de reserva del cliente                                      */
-/* ------------------------------------------------------------------ */
 function ClientBooking({ config, appointments, onBook, onGoAdmin }) {
   const [step, setStep] = useState(1);
   const [service, setService] = useState(null);
@@ -306,8 +268,6 @@ function ClientBooking({ config, appointments, onBook, onGoAdmin }) {
   const [time, setTime] = useState(null);
   const [name, setName] = useState("");
   const [phone, setPhone] = useState("");
-  const [submitting, setSubmitting] = useState(false);
-  const [errorMsg, setErrorMsg] = useState("");
   const [lastAppt, setLastAppt] = useState(null);
 
   const days = useMemo(() => {
@@ -356,26 +316,10 @@ function ClientBooking({ config, appointments, onBook, onGoAdmin }) {
     setName("");
     setPhone("");
     setLastAppt(null);
-    setErrorMsg("");
   };
 
-  const confirmBooking = async () => {
-    setSubmitting(true);
-    setErrorMsg("");
+  const confirmBooking = () => {
     const dKey = dateKey(date);
-    const stillFree = !appointments.some((a) => {
-      if (a.date !== dKey || a.status === "cancelled") return false;
-      const aStart = timeToMin(a.time);
-      const aEnd = aStart + a.duration;
-      const tStart = timeToMin(time);
-      return tStart < aEnd && aStart < tStart + service.duration;
-    });
-    if (!stillFree) {
-      setErrorMsg("Ese horario se acaba de ocupar. Elige otra hora.");
-      setSubmitting(false);
-      setStep(3);
-      return;
-    }
     const apptData = {
       date: dKey,
       time,
@@ -389,26 +333,24 @@ function ClientBooking({ config, appointments, onBook, onGoAdmin }) {
       createdAt: new Date().toISOString(),
     };
 
-    const ok = await onBook(apptData);
-    setSubmitting(false);
-    if (ok) {
-      setLastAppt(apptData);
-      setStep(5);
-    } else {
-      setErrorMsg("No se pudo guardar la cita. Intenta de nuevo.");
-    }
+    // Cambiar inmediatamente la pantalla
+    setLastAppt(apptData);
+    setStep(5);
+
+    // Enviar a Firebase en segundo plano
+    onBook(apptData);
   };
 
   const waLink = (appt) => {
     if (!config.whatsapp) return null;
     const digits = config.whatsapp.replace(/\D/g, "");
     const d = new Date(appt.date + "T00:00:00");
-    const msg = `Hola, soy ${appt.clientName}. Quiero confirmar mi cita en ${config.shopName}:\n• Servicio: ${appt.serviceName}\n• Fecha: ${DAY_NAMES[d.getDay()]} ${d.getDate()} de ${MONTHS[d.getMonth()]}\n• Hora: ${appt.time}\n• Valor: ${formatCOP(appt.price)}`;
+    const msg = `Hola, soy ${appt.clientName}. Acabo de agendar una cita en ${config.shopName}:\n• Servicio: ${appt.serviceName}\n• Fecha: ${DAY_NAMES[d.getDay()]} ${d.getDate()} de ${MONTHS[d.getMonth()]}\n• Hora: ${appt.time}\n• Valor: ${formatCOP(appt.price)}`;
     return `https://wa.me/${digits}?text=${encodeURIComponent(msg)}`;
   };
 
   return (
-    <div style={{ backgroundColor: C.bg, minHeight: "600px" }} className="flex flex-col">
+    <div style={{ backgroundColor: C.bg, minHeight: "100vh" }} className="flex flex-col">
       <Header config={config} />
       <StripeDivider />
 
@@ -487,7 +429,6 @@ function ClientBooking({ config, appointments, onBook, onGoAdmin }) {
               label={date ? `${DAY_NAMES[date.getDay()]} ${date.getDate()} ${MONTHS[date.getMonth()]}` : ""}
             />
             <StepTitle icon={<Clock size={18} />} text="Elige la hora" />
-            {errorMsg && <p style={{ color: C.red }} className="text-xs mt-2">{errorMsg}</p>}
             {slots.length === 0 ? (
               <p style={{ color: C.muted }} className="text-sm mt-4">
                 No hay horarios disponibles ese día. Prueba con otra fecha.
@@ -546,49 +487,52 @@ function ClientBooking({ config, appointments, onBook, onGoAdmin }) {
                 <SummaryRow label="Valor" value={formatCOP(service?.price)} bold />
               </div>
 
-              {errorMsg && <p style={{ color: C.red }} className="text-xs">{errorMsg}</p>}
-
               <button
-                disabled={!name.trim() || !phone.trim() || submitting}
+                disabled={!name.trim() || !phone.trim()}
                 onClick={confirmBooking}
                 style={{ backgroundColor: C.magenta, color: C.bg, opacity: !name.trim() || !phone.trim() ? 0.5 : 1 }}
-                className="rounded-lg py-3 mt-2 flex items-center justify-center gap-2 font-semibold"
+                className="rounded-lg py-3.5 mt-2 flex items-center justify-center gap-2 font-semibold text-base active:scale-95 transition-transform"
               >
-                {submitting ? <BarberSpinner size={20} /> : <Check size={18} />}
-                {submitting ? "Guardando…" : "Confirmar cita"}
+                <Check size={20} />
+                Confirmar cita
               </button>
             </div>
           </div>
         )}
 
         {step === 5 && lastAppt && (
-          <div className="flex flex-col items-center text-center gap-4 pt-6">
-            <div style={{ backgroundColor: C.green }} className="rounded-full p-4">
-              <Check size={32} color={C.bg} />
+          <div className="flex flex-col items-center text-center gap-4 pt-4">
+            <div style={{ backgroundColor: C.green }} className="rounded-full p-4 shadow-lg shadow-green-500/20">
+              <Check size={36} color={C.bg} />
             </div>
-            <h2 style={{ ...displayFont, color: C.white }} className="text-xl uppercase font-semibold">¡Cita confirmada!</h2>
+            <div>
+              <h2 style={{ ...displayFont, color: C.white }} className="text-2xl uppercase font-bold tracking-wide">¡Cita Registrada!</h2>
+              <p style={{ color: C.muted }} className="text-xs mt-1">
+                Tu turno ha sido reservado con éxito.
+              </p>
+            </div>
+
             <div style={{ backgroundColor: C.card, borderColor: C.cardBorder }} className="border rounded-lg p-4 w-full text-left">
+              <SummaryRow label="Cliente" value={lastAppt.clientName} />
               <SummaryRow label="Servicio" value={lastAppt.serviceName} />
               <SummaryRow label="Fecha" value={(() => { const d = new Date(lastAppt.date + "T00:00:00"); return `${DAY_NAMES[d.getDay()]} ${d.getDate()} ${MONTHS[d.getMonth()]}`; })()} />
               <SummaryRow label="Hora" value={lastAppt.time} />
               <SummaryRow label="Valor" value={formatCOP(lastAppt.price)} bold />
             </div>
-            {waLink(lastAppt) ? (
+
+            {waLink(lastAppt) && (
               <a
                 href={waLink(lastAppt)}
                 target="_blank"
                 rel="noopener noreferrer"
                 style={{ backgroundColor: "#25D366", color: "#08240F" }}
-                className="w-full rounded-lg py-3 flex items-center justify-center gap-2 font-semibold"
+                className="w-full rounded-lg py-3.5 flex items-center justify-center gap-2 font-semibold active:scale-95 transition-transform"
               >
-                <MessageCircle size={18} /> Avisar por WhatsApp
+                <MessageCircle size={20} /> Enviar confirmación por WhatsApp
               </a>
-            ) : (
-              <p style={{ color: C.muted }} className="text-xs">
-                Guarda la fecha y hora. El barbero verá tu cita en su panel en tiempo real.
-              </p>
             )}
-            <button onClick={resetAll} style={{ color: C.cyan }} className="text-sm underline mt-2">
+
+            <button onClick={resetAll} style={{ color: C.cyan }} className="text-sm underline mt-2 py-2">
               Reservar otra cita
             </button>
           </div>
@@ -643,14 +587,11 @@ function IconBtn({ onClick, icon, label, color }) {
   );
 }
 
-/* ------------------------------------------------------------------ */
-/*  Login del admin (barbero)                                         */
-/* ------------------------------------------------------------------ */
 function AdminLogin({ config, onSuccess, onBack }) {
   const [pw, setPw] = useState("");
   const [error, setError] = useState("");
   return (
-    <div style={{ backgroundColor: C.bg, minHeight: "600px" }} className="flex flex-col items-center justify-center px-6 gap-4">
+    <div style={{ backgroundColor: C.bg, minHeight: "100vh" }} className="flex flex-col items-center justify-center px-6 gap-4">
       <button onClick={onBack} className="self-start flex items-center gap-1" style={{ color: C.cyan }}>
         <ArrowLeft size={14} /> <span className="text-xs">Volver</span>
       </button>
@@ -685,13 +626,10 @@ function AdminLogin({ config, onSuccess, onBack }) {
   );
 }
 
-/* ------------------------------------------------------------------ */
-/*  Panel del barbero                                                 */
-/* ------------------------------------------------------------------ */
 function AdminPanel({ config, appointments, setConfig, onUpdateStatus, onRemoveAppt, onExit }) {
-  const [tab, setTab] = useState("agenda"); // agenda | settings
+  const [tab, setTab] = useState("agenda");
   return (
-    <div style={{ backgroundColor: C.bg, minHeight: "600px" }} className="flex flex-col">
+    <div style={{ backgroundColor: C.bg, minHeight: "100vh" }} className="flex flex-col">
       <div style={{ backgroundColor: C.bg }} className="px-5 pt-6 pb-4 flex items-center justify-between">
         <div className="flex items-center gap-2">
           <Scissors size={18} style={{ color: C.cyan }} />
