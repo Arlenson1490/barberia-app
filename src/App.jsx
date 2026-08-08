@@ -6,12 +6,14 @@ import {
   addDoc, 
   doc, 
   updateDoc, 
-  deleteDoc 
+  deleteDoc,
+  setDoc,
+  runTransaction
 } from "firebase/firestore";
 import {
   Scissors, Calendar, Clock, User, Check, Settings,
   LogOut, MessageCircle, Lock, ArrowLeft, CalendarDays, Ban, CheckCircle2,
-  Trash2
+  Trash2, AlertCircle
 } from "lucide-react";
 
 /* ------------------------------------------------------------------ */
@@ -33,32 +35,31 @@ const C = {
   poleBlue: "#274B9C",
 };
 
-const FONT_LINK_ID = "barberia-fonts";
-
-function useGoogleFonts() {
-  useEffect(() => {
-    if (document.getElementById(FONT_LINK_ID)) return;
-    const link = document.createElement("link");
-    link.id = FONT_LINK_ID;
-    link.rel = "stylesheet";
-    link.href =
-      "https://fonts.googleapis.com/css2?family=Rajdhani:wght@500;600;700&family=Inter:wght@400;500;600;700&display=swap";
-    document.head.appendChild(link);
-  }, []);
-}
-
 const displayFont = { fontFamily: "'Rajdhani', sans-serif" };
 const bodyFont = { fontFamily: "'Inter', sans-serif" };
 
 const pad = (n) => n.toString().padStart(2, "0");
 const dateKey = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+
+// Parsea fechas en formato YYYY-MM-DD sin sufrir por desfases UTC
+const parseLocalDate = (dateStr) => {
+  const [year, month, day] = dateStr.split("-").map(Number);
+  return new Date(year, month - 1, day);
+};
+
 const timeToMin = (t) => {
   const [h, m] = t.split(":").map(Number);
   return h * 60 + m;
 };
+
 const minToTime = (m) => `${pad(Math.floor(m / 60))}:${pad(m % 60)}`;
+
 const formatCOP = (n) =>
-  new Intl.NumberFormat("es-CO", { style: "currency", currency: "COP", maximumFractionDigits: 0 }).format(n || 0);
+  new Intl.NumberFormat("es-CO", { 
+    style: "currency", 
+    currency: "COP", 
+    maximumFractionDigits: 0 
+  }).format(n || 0);
 
 const DAY_NAMES = ["Domingo", "Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado"];
 const DAY_SHORT = ["Dom", "Lun", "Mar", "Mié", "Jue", "Vie", "Sáb"];
@@ -67,7 +68,7 @@ const MONTHS = ["ene", "feb", "mar", "abr", "may", "jun", "jul", "ago", "sep", "
 const DEFAULT_CONFIG = {
   shopName: "Como Nuevos Barbería",
   tagline: "Estilo & Estructura",
-  whatsapp: "",
+  whatsapp: "573000000000",
   address: "",
   adminPassword: "1234",
   slotInterval: 30,
@@ -107,7 +108,6 @@ function BarberSpinner({ size = 40 }) {
           animation: "barberspin 1.1s linear infinite",
         }}
       />
-      <style>{`@keyframes barberspin { from { transform: translate(-25%,-25%) rotate(0deg);} to { transform: translate(-25%,-25%) rotate(360deg);} }`}</style>
     </div>
   );
 }
@@ -124,12 +124,30 @@ function StripeDivider() {
 }
 
 export default function BarberiaApp() {
-  useGoogleFonts();
   const [config, setConfig] = useState(DEFAULT_CONFIG);
   const [appointments, setAppointments] = useState([]);
   const [ready, setReady] = useState(false);
   const [view, setView] = useState("client");
 
+  // Escuchar configuración global desde Firestore
+  useEffect(() => {
+    const unsubConfig = onSnapshot(
+      doc(db, "configuracion", "general"),
+      (docSnap) => {
+        if (docSnap.exists()) {
+          setConfig(docSnap.data());
+        } else {
+          // Crear la configuración inicial si no existe
+          setDoc(doc(db, "configuracion", "general"), DEFAULT_CONFIG);
+        }
+      },
+      (error) => console.error("Error al cargar configuración:", error)
+    );
+
+    return () => unsubConfig();
+  }, []);
+
+  // Escuchar citas en tiempo real
   useEffect(() => {
     const unsubscribeAppts = onSnapshot(
       collection(db, "citas"),
@@ -150,12 +168,8 @@ export default function BarberiaApp() {
     return () => unsubscribeAppts();
   }, []);
 
-  // Envío en segundo plano sin bloquear la UI
-  const handleBookAppointment = (newAppt) => {
-    // Se guarda en la nube asíncronamente
-    addDoc(collection(db, "citas"), newAppt).catch((error) => {
-      console.error("Error al guardar en segundo plano:", error);
-    });
+  const handleBookAppointment = async (newAppt) => {
+    return await addDoc(collection(db, "citas"), newAppt);
   };
 
   const handleUpdateStatus = async (id, status) => {
@@ -171,6 +185,15 @@ export default function BarberiaApp() {
       await deleteDoc(doc(db, "citas", id));
     } catch (e) {
       console.error(e);
+    }
+  };
+
+  const handleSaveConfig = async (newConfig) => {
+    try {
+      await setDoc(doc(db, "configuracion", "general"), newConfig);
+      setConfig(newConfig);
+    } catch (e) {
+      console.error("Error al guardar la configuración:", e);
     }
   };
 
@@ -190,6 +213,8 @@ export default function BarberiaApp() {
 
   return (
     <div style={{ backgroundColor: C.bg, minHeight: "100vh", ...bodyFont }} className="w-full">
+      <style>{`@keyframes barberspin { from { transform: translate(-25%,-25%) rotate(0deg);} to { transform: translate(-25%,-25%) rotate(360deg);} }`}</style>
+      
       {view === "client" && (
         <ClientBooking
           config={config}
@@ -209,7 +234,7 @@ export default function BarberiaApp() {
         <AdminPanel
           config={config}
           appointments={appointments}
-          setConfig={setConfig}
+          onSaveConfig={handleSaveConfig}
           onUpdateStatus={handleUpdateStatus}
           onRemoveAppt={handleRemoveAppointment}
           onExit={() => setView("client")}
@@ -248,7 +273,10 @@ function Header({ config }) {
       />
       <div className="flex items-center justify-center gap-2 mb-1 relative">
         <Scissors size={20} style={{ color: C.cyan }} />
-        <h1 style={{ ...displayFont, color: C.white, textShadow: `0 0 14px ${C.cyan}66, 0 0 22px ${C.magenta}44` }} className="text-2xl tracking-wide uppercase font-semibold">
+        <h1 
+          style={{ ...displayFont, color: C.white, textShadow: `0 0 14px ${C.cyan}66, 0 0 22px ${C.magenta}44` }} 
+          className="text-2xl tracking-wide uppercase font-semibold"
+        >
           {config.shopName}
         </h1>
       </div>
@@ -269,6 +297,8 @@ function ClientBooking({ config, appointments, onBook, onGoAdmin }) {
   const [name, setName] = useState("");
   const [phone, setPhone] = useState("");
   const [lastAppt, setLastAppt] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [bookingError, setBookingError] = useState("");
 
   const days = useMemo(() => {
     const arr = [];
@@ -316,9 +346,18 @@ function ClientBooking({ config, appointments, onBook, onGoAdmin }) {
     setName("");
     setPhone("");
     setLastAppt(null);
+    setBookingError("");
   };
 
-  const confirmBooking = () => {
+  const isPhoneValid = useMemo(() => {
+    const clean = phone.replace(/\D/g, "");
+    return clean.length >= 7 && clean.length <= 12;
+  }, [phone]);
+
+  const confirmBooking = async () => {
+    setLoading(true);
+    setBookingError("");
+
     const dKey = dateKey(date);
     const apptData = {
       date: dKey,
@@ -333,18 +372,22 @@ function ClientBooking({ config, appointments, onBook, onGoAdmin }) {
       createdAt: new Date().toISOString(),
     };
 
-    // Cambiar inmediatamente la pantalla
-    setLastAppt(apptData);
-    setStep(5);
-
-    // Enviar a Firebase en segundo plano
-    onBook(apptData);
+    try {
+      await onBook(apptData);
+      setLastAppt(apptData);
+      setStep(5);
+    } catch (err) {
+      console.error(err);
+      setBookingError("Hubo un error al guardar la cita. Por favor intenta de nuevo.");
+    } finally {
+      setLoading(false);
+    }
   };
 
   const waLink = (appt) => {
     if (!config.whatsapp) return null;
     const digits = config.whatsapp.replace(/\D/g, "");
-    const d = new Date(appt.date + "T00:00:00");
+    const d = parseLocalDate(appt.date);
     const msg = `Hola, soy ${appt.clientName}. Acabo de agendar una cita en ${config.shopName}:\n• Servicio: ${appt.serviceName}\n• Fecha: ${DAY_NAMES[d.getDay()]} ${d.getDate()} de ${MONTHS[d.getMonth()]}\n• Hora: ${appt.time}\n• Valor: ${formatCOP(appt.price)}`;
     return `https://wa.me/${digits}?text=${encodeURIComponent(msg)}`;
   };
@@ -472,7 +515,7 @@ function ClientBooking({ config, appointments, onBook, onGoAdmin }) {
               />
               <input
                 type="tel"
-                placeholder="Número de celular"
+                placeholder="Número de celular (ej: 3001234567)"
                 value={phone}
                 onChange={(e) => setPhone(e.target.value)}
                 style={{ backgroundColor: C.card, borderColor: C.cardBorder, color: C.white }}
@@ -487,14 +530,25 @@ function ClientBooking({ config, appointments, onBook, onGoAdmin }) {
                 <SummaryRow label="Valor" value={formatCOP(service?.price)} bold />
               </div>
 
+              {bookingError && (
+                <div className="flex items-center gap-2 p-3 rounded-lg bg-red-500/10 border border-red-500/20 text-red-400 text-xs">
+                  <AlertCircle size={16} />
+                  <span>{bookingError}</span>
+                </div>
+              )}
+
               <button
-                disabled={!name.trim() || !phone.trim()}
+                disabled={!name.trim() || !isPhoneValid || loading}
                 onClick={confirmBooking}
-                style={{ backgroundColor: C.magenta, color: C.bg, opacity: !name.trim() || !phone.trim() ? 0.5 : 1 }}
+                style={{ 
+                  backgroundColor: C.magenta, 
+                  color: C.bg, 
+                  opacity: (!name.trim() || !isPhoneValid || loading) ? 0.5 : 1 
+                }}
                 className="rounded-lg py-3.5 mt-2 flex items-center justify-center gap-2 font-semibold text-base active:scale-95 transition-transform"
               >
-                <Check size={20} />
-                Confirmar cita
+                {loading ? <BarberSpinner size={20} /> : <Check size={20} />}
+                {loading ? "Reservando..." : "Confirmar cita"}
               </button>
             </div>
           </div>
@@ -515,7 +569,7 @@ function ClientBooking({ config, appointments, onBook, onGoAdmin }) {
             <div style={{ backgroundColor: C.card, borderColor: C.cardBorder }} className="border rounded-lg p-4 w-full text-left">
               <SummaryRow label="Cliente" value={lastAppt.clientName} />
               <SummaryRow label="Servicio" value={lastAppt.serviceName} />
-              <SummaryRow label="Fecha" value={(() => { const d = new Date(lastAppt.date + "T00:00:00"); return `${DAY_NAMES[d.getDay()]} ${d.getDate()} ${MONTHS[d.getMonth()]}`; })()} />
+              <SummaryRow label="Fecha" value={(() => { const d = parseLocalDate(lastAppt.date); return `${DAY_NAMES[d.getDay()]} ${d.getDate()} ${MONTHS[d.getMonth()]}`; })()} />
               <SummaryRow label="Hora" value={lastAppt.time} />
               <SummaryRow label="Valor" value={formatCOP(lastAppt.price)} bold />
             </div>
@@ -580,7 +634,7 @@ function IconBtn({ onClick, icon, label, color }) {
     <button
       onClick={onClick}
       style={{ color: color, borderColor: C.cardBorder }}
-      className="border rounded px-2 py-1 flex items-center gap-1 text-xs"
+      className="border rounded px-2 py-1 flex items-center gap-1 text-xs active:scale-95 transition-transform"
     >
       {icon} {label}
     </button>
@@ -590,6 +644,15 @@ function IconBtn({ onClick, icon, label, color }) {
 function AdminLogin({ config, onSuccess, onBack }) {
   const [pw, setPw] = useState("");
   const [error, setError] = useState("");
+
+  const handleLogin = () => {
+    if (pw === config.adminPassword) {
+      onSuccess();
+    } else {
+      setError("Contraseña incorrecta");
+    }
+  };
+
   return (
     <div style={{ backgroundColor: C.bg, minHeight: "100vh" }} className="flex flex-col items-center justify-center px-6 gap-4">
       <button onClick={onBack} className="self-start flex items-center gap-1" style={{ color: C.cyan }}>
@@ -605,18 +668,12 @@ function AdminLogin({ config, onSuccess, onBack }) {
         style={{ backgroundColor: C.card, color: C.white, borderColor: C.cardBorder }}
         className="border rounded-lg px-4 py-3 text-sm outline-none w-full max-w-xs text-center"
         onKeyDown={(e) => {
-          if (e.key === "Enter") {
-            if (pw === config.adminPassword) onSuccess();
-            else setError("Contraseña incorrecta");
-          }
+          if (e.key === "Enter") handleLogin();
         }}
       />
       {error && <p style={{ color: C.red }} className="text-xs">{error}</p>}
       <button
-        onClick={() => {
-          if (pw === config.adminPassword) onSuccess();
-          else setError("Contraseña incorrecta");
-        }}
+        onClick={handleLogin}
         style={{ backgroundColor: C.magenta, color: C.bg }}
         className="rounded-lg py-3 w-full max-w-xs font-semibold"
       >
@@ -626,8 +683,9 @@ function AdminLogin({ config, onSuccess, onBack }) {
   );
 }
 
-function AdminPanel({ config, appointments, setConfig, onUpdateStatus, onRemoveAppt, onExit }) {
+function AdminPanel({ config, appointments, onSaveConfig, onUpdateStatus, onRemoveAppt, onExit }) {
   const [tab, setTab] = useState("agenda");
+
   return (
     <div style={{ backgroundColor: C.bg, minHeight: "100vh" }} className="flex flex-col">
       <div style={{ backgroundColor: C.bg }} className="px-5 pt-6 pb-4 flex items-center justify-between">
@@ -653,7 +711,7 @@ function AdminPanel({ config, appointments, setConfig, onUpdateStatus, onRemoveA
           />
         )}
         {tab === "settings" && (
-          <SettingsTab config={config} setConfig={setConfig} />
+          <SettingsTab config={config} onSaveConfig={onSaveConfig} />
         )}
       </div>
     </div>
@@ -701,7 +759,7 @@ function AgendaTab({ appointments, onUpdateStatus, onRemoveAppt }) {
       )}
 
       {Object.entries(grouped).map(([d, list]) => {
-        const dObj = new Date(d + "T00:00:00");
+        const dObj = parseLocalDate(d);
         return (
           <div key={d} className="mb-5">
             <p style={{ color: C.cyan, ...displayFont }} className="text-sm uppercase tracking-wide mb-2 font-semibold">
@@ -751,15 +809,15 @@ function AgendaTab({ appointments, onUpdateStatus, onRemoveAppt }) {
   );
 }
 
-function SettingsTab({ config, setConfig }) {
+function SettingsTab({ config, onSaveConfig }) {
   const [shopName, setShopName] = useState(config.shopName || "");
   const [tagline, setTagline] = useState(config.tagline || "");
   const [whatsapp, setWhatsapp] = useState(config.whatsapp || "");
   const [adminPassword, setAdminPassword] = useState(config.adminPassword || "");
   const [saved, setSaved] = useState(false);
 
-  const saveSettings = () => {
-    setConfig({
+  const saveSettings = async () => {
+    await onSaveConfig({
       ...config,
       shopName,
       tagline,
@@ -794,7 +852,7 @@ function SettingsTab({ config, setConfig }) {
         />
       </div>
       <div>
-        <label style={{ color: C.muted }} className="text-xs mb-1 block">Número de WhatsApp (con código de país, ej: 573001234567)</label>
+        <label style={{ color: C.muted }} className="text-xs mb-1 block">Número de WhatsApp (ej: 573001234567)</label>
         <input
           type="text"
           value={whatsapp}
@@ -817,9 +875,9 @@ function SettingsTab({ config, setConfig }) {
       <button
         onClick={saveSettings}
         style={{ backgroundColor: C.cyan, color: C.bg }}
-        className="rounded-lg py-3 mt-2 font-semibold flex items-center justify-center gap-2"
+        className="rounded-lg py-3 mt-2 font-semibold flex items-center justify-center gap-2 active:scale-95 transition-transform"
       >
-        <Check size={18} /> {saved ? "¡Guardado!" : "Guardar cambios"}
+        <Check size={18} /> {saved ? "¡Guardado en base de datos!" : "Guardar cambios"}
       </button>
     </div>
   );
