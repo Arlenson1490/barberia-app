@@ -1,13 +1,51 @@
-/* index.css */
-@keyframes barberspin {
-  from { transform: translate(-25%, -25%) rotate(0deg); }
-  to { transform: translate(-25%, -25%) rotate(360deg); }
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Rajdhani:wght@500;600;700&display=swap');
+
+@import "tailwindcss";
+:root {
+  --bg-dark: #0B0B0E;
+  --bg-elevated: #101015;
+  --bg-card: #15151B;
+  --border-card: #242429;
+  --border-hover: #34343C;
+  --cyan-neon: #4EE9E3;
+  --magenta-neon: #D946CE;
+  --text-white: #F2F3F7;
+  --text-muted: #8B8FA3;
+  --text-dim: #54566A;
+  --status-green: #34D399;
+  --status-red: #F16565;
 }
 
-:root {
-  --bg-main: #0A0A0D;
-  --bg-card: #16161D;
-  --border-card: #26262F;
-  --color-cyan: #3EEDEB;
-  --color-magenta: #E93DE0;
+body {
+  margin: 0;
+  background-color: var(--bg-dark);
+  color: var(--text-white);
+  font-family: 'Inter', sans-serif;
+  -webkit-font-smoothing: antialiased;
 }
+
+.font-display {
+  font-family: 'Rajdhani', sans-serif;
+}
+
+@keyframes barberSpin {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+
+.animate-barber-spin {
+  animation: barberSpin 0.8s linear infinite;
+}
+
+.barber-gradient {
+  background: linear-gradient(135deg, var(--cyan-neon), var(--magenta-neon));
+}
+
+.barber-gradient-text {
+  background: linear-gradient(135deg, var(--cyan-neon), var(--magenta-neon));
+  background-clip: text;
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+
