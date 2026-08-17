@@ -15,31 +15,43 @@ const COLLECTION_NAME = "citas";
 const CONFIG_DOC_PATH = ["configuracion", "barberia"];
 
 /**
- * Escuchador en tiempo real de la colección de citas.
+ * Escuchador en tiempo real para las citas registradas en la colección.
  */
 export const subscribeToCitas = (callback) => {
-  const q = query(collection(db, COLLECTION_NAME), orderBy("createdAt", "desc"));
-  return onSnapshot(q, (snapshot) => {
-    const citas = snapshot.docs.map((d) => ({
-      id: d.id,
-      ...d.data()
-    }));
-    callback(citas);
-  }, (error) => {
-    console.error("Error en tiempo real con Firestore:", error);
-  });
+  try {
+    const q = query(collection(db, COLLECTION_NAME), orderBy("createdAt", "desc"));
+    return onSnapshot(
+      q, 
+      (snapshot) => {
+        const citas = snapshot.docs.map((d) => ({
+          id: d.id,
+          ...d.data()
+        }));
+        callback(citas);
+      },
+      (error) => {
+        console.error("Error escuchando citas en tiempo real:", error);
+      }
+    );
+  } catch (err) {
+    console.error("Error al suscribirse a Firestore:", err);
+    return () => {};
+  }
 };
 
 /**
- * Inserta la cita en segundo plano (soporta Optimistic UI).
+ * Guarda una cita en Firestore en segundo plano.
  */
 export const addCitaAsync = async (citaData) => {
   try {
-    const docRef = await addDoc(collection(db, COLLECTION_NAME), citaData);
+    const docRef = await addDoc(collection(db, COLLECTION_NAME), {
+      ...citaData,
+      createdAt: citaData.createdAt || new Date().toISOString()
+    });
     return { ok: true, id: docRef.id };
   } catch (error) {
-    console.error("Error agregando cita en Firestore:", error);
-    return { ok: false, error };
+    console.error("Error al guardar cita en Firestore:", error);
+    throw error;
   }
 };
 
@@ -52,13 +64,13 @@ export const updateCitaStatus = async (citaId, status) => {
     await updateDoc(citaRef, { status });
     return { ok: true };
   } catch (error) {
-    console.error("Error actualizando cita:", error);
+    console.error("Error actualizando estado de cita:", error);
     return { ok: false, error };
   }
 };
 
 /**
- * Elimina una cita de la colección.
+ * Elimina una cita de la base de datos.
  */
 export const deleteCita = async (citaId) => {
   try {
@@ -72,21 +84,24 @@ export const deleteCita = async (citaId) => {
 };
 
 /**
- * Escuchador en tiempo real para la configuración de la barbería (horarios, servicios, etc.).
+ * Escuchador en tiempo real para la configuración del negocio.
  */
 export const subscribeToConfig = (callback) => {
-  const configRef = doc(db, ...CONFIG_DOC_PATH);
-  return onSnapshot(configRef, (docSnap) => {
-    if (docSnap.exists()) {
-      callback(docSnap.data());
-    }
-  }, (error) => {
-    console.error("Error en tiempo real obteniendo configuración:", error);
-  });
+  try {
+    const configRef = doc(db, ...CONFIG_DOC_PATH);
+    return onSnapshot(configRef, (docSnap) => {
+      if (docSnap.exists()) {
+        callback(docSnap.data());
+      }
+    });
+  } catch (err) {
+    console.error("Error leyendo configuración:", err);
+    return () => {};
+  }
 };
 
 /**
- * Guarda o actualiza los datos de configuración en Firestore.
+ * Guarda la configuración general en Firestore.
  */
 export const updateConfigAsync = async (newConfig) => {
   try {
