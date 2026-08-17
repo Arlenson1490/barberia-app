@@ -33,7 +33,7 @@ export function ClientBooking({ config, appointments, onBookOptimistic, onGoAdmi
     return arr;
   }, []);
 
-  // Filtro de slots disponibles
+ // Filtro de slots disponibles (Horas Enteras únicamente: 10:00, 11:00, etc.)
   const slots = useMemo(() => {
     if (!service || !date) return [];
     const dow = date.getDay();
@@ -42,7 +42,6 @@ export function ClientBooking({ config, appointments, onBookOptimistic, onGoAdmi
 
     const openMin = timeToMin(dayHours.open);
     const closeMin = timeToMin(dayHours.close);
-    const interval = config.slotInterval || 30;
     const dur = service.duration;
     const dKey = dateKey(date);
 
@@ -51,14 +50,20 @@ export function ClientBooking({ config, appointments, onBookOptimistic, onGoAdmi
     const isToday = dateKey(now) === dKey;
     const nowMin = now.getHours() * 60 + now.getMinutes();
 
+    // Redondear la hora de apertura a la siguiente hora en punto si viniera con minutos
+    const firstHourMin = Math.ceil(openMin / 60) * 60;
+
     const out = [];
-    for (let t = openMin; t + dur <= closeMin; t += interval) {
+    // Incrementar t += 60 fuerza a que cada salto sea exactamente de 1 hora
+    for (let t = firstHourMin; t + dur <= closeMin; t += 60) {
       if (isToday && t <= nowMin) continue;
+
       const overlap = dayAppts.some((a) => {
         const aStart = timeToMin(a.time);
         const aEnd = aStart + a.duration;
         return t < aEnd && aStart < t + dur;
       });
+
       if (!overlap) out.push(minToTime(t));
     }
     return out;

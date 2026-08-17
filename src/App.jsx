@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from "react";
 import "./index.css";
-import { subscribeToCitas, addCitaAsync } from "./firestoreService";
+import { subscribeToCitas, subscribeToConfig, addCitaAsync } from "./firestoreService";
 import { ClientBooking } from "./ClientBooking";
 import { AdminLogin, AdminPanel } from "./AdminPanel";
 import { BarberSpinner } from "./Header";
@@ -10,15 +10,15 @@ const DEFAULT_CONFIG = {
   tagline: "Estilo & Estructura",
   whatsapp: "573000000000",
   adminPassword: "1234",
-  slotInterval: 30,
+  slotInterval: 60, // Intervalo predeterminado de horas enteras
   hours: {
-    0: { closed: true, open: "09:00", close: "18:00" },
-    1: { closed: false, open: "09:00", close: "19:00" },
-    2: { closed: false, open: "09:00", close: "19:00" },
-    3: { closed: false, open: "09:00", close: "19:00" },
-    4: { closed: false, open: "09:00", close: "19:00" },
-    5: { closed: false, open: "09:00", close: "20:00" },
-    6: { closed: false, open: "09:00", close: "17:00" },
+    0: { closed: true, open: "10:00", close: "19:00" },
+    1: { closed: false, open: "10:00", close: "19:00" },
+    2: { closed: false, open: "10:00", close: "19:00" },
+    3: { closed: false, open: "10:00", close: "19:00" },
+    4: { closed: false, open: "10:00", close: "19:00" },
+    5: { closed: false, open: "10:00", close: "19:00" },
+    6: { closed: false, open: "10:00", close: "19:00" },
   },
   services: [
     { id: "s1", name: "Corte clásico", duration: 30, price: 20000 },
@@ -33,13 +33,28 @@ export default function App() {
   const [loading, setLoading] = useState(true);
   const [view, setView] = useState("client"); // "client" | "adminLogin" | "admin"
 
-  // Escuchador en Tiempo Real desde Cloud Firestore
+  // 1. Escuchar Citas y Configuración en Tiempo Real desde Cloud Firestore
   useEffect(() => {
-    const unsubscribe = subscribeToCitas((data) => {
+    // Suscripción a citas
+    const unsubscribeCitas = subscribeToCitas((data) => {
       setAppointments(data);
       setLoading(false);
     });
-    return () => unsubscribe();
+
+    // Suscripción a la configuración global de la barbería
+    const unsubscribeConfig = subscribeToConfig((remoteConfig) => {
+      if (remoteConfig) {
+        setConfig((prev) => ({
+          ...prev,
+          ...remoteConfig
+        }));
+      }
+    });
+
+    return () => {
+      unsubscribeCitas();
+      unsubscribeConfig();
+    };
   }, []);
 
   // Proceso Optimista: renderiza la cita inmediatamente en cliente y guarda asíncronamente
@@ -52,7 +67,7 @@ export default function App() {
 
     // Ejecuta inserción en segundo plano en Firestore
     addCitaAsync(newCitaData).catch((err) => {
-      console.error("Fallo la sincronización en segundo plano:", err);
+      console.error("Falló la sincronización en segundo plano:", err);
       // Rollback si la base de datos falla
       setAppointments((prev) => prev.filter((a) => a.id !== tempId));
     });
@@ -68,8 +83,15 @@ export default function App() {
   }
 
   return (
-    <div className="min-h-screen bg-[#0B0B0E] flex items-center justify-center p-4">
-      <div className={`w-full ${view === "admin" ? "max-w-lg" : "max-w-md md:max-w-3xl"} bg-[#15151B] border border-[#242429] rounded-[28px] shadow-2xl overflow-hidden transition-all duration-300`}>
+    <div className="min-h-screen bg-[#0B0B0E] flex items-center justify-center p-3 sm:p-6 lg:p-8">
+      {/* Contenedor Adaptativo: Responsivo para Móvil, Tablet y PC */}
+      <div
+        className={`w-full ${
+          view === "admin"
+            ? "max-w-2xl lg:max-w-4xl"
+            : "max-w-md md:max-w-3xl lg:max-w-5xl"
+        } bg-[#15151B] border border-[#242429] rounded-[24px] sm:rounded-[28px] shadow-2xl overflow-hidden transition-all duration-300`}
+      >
         {view === "client" && (
           <ClientBooking
             config={config}
