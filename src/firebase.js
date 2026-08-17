@@ -2,16 +2,16 @@ import { initializeApp } from "firebase/app";
 import { getFirestore } from "firebase/firestore";
 
 const firebaseConfig = {
-  apiKey: "AIzaSyCN1Tsi8R6Kq04W5k_sCQmYdzEtW2Lqyto",
-  authDomain: "barberia-app-f1c40.firebaseapp.com",
-  projectId: "barberia-app-f1c40",
-  storageBucket: "barberia-app-f1c40.firebasestorage.app",
-  messagingSenderId: "1087018169305",
-  appId: "1:1087018169305:web:b0e516c3078d2b56a79fc8"
+  apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
+  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
+  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID,
+  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET,
+  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID,
+  appId: import.meta.env.VITE_FIREBASE_APP_ID,
 };
 
 // Inicializamos Firebase
 const app = initializeApp(firebaseConfig);
 
-// Exportamos Firestore para usarlo en App.jsx
+// Exportamos Firestore para usarlo en el proyecto
 export const db = getFirestore(app);
